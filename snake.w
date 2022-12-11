@@ -10,10 +10,9 @@ game apply: if the snake runs into itself or off the board then
 the game is over, and each time the snake gets an apple its
 length increases by $1$.
 
-The program uses the ncurses library for terminal input and output.
-When compiling, make sure to add {\tt -lncurses} to the compiler flags.
-(Also make sure you have installed the ncurses library.)
-
+The program uses ANSI terminal escape sequences to do the
+terminal magic required. Such magic may or may not work
+on Windows. Use Linux or BSD.
 @ Here is the high-level overview of the program. We will fill
 in the components as we go.
 @c
@@ -29,11 +28,11 @@ int main(int argc, char *argv[])
   @<Run the snake game@>@;
   return 0;
 }
-@*Initialising the ncurses library. Let's begin by doing a few
+@*Initialising the terminal. Let's begin by doing a few
 basic things to initialise our program. Before we forget,
-we should include the ncurses library header file.
+we should include the termios header file.
 @<Include files@>=
-#include <ncurses.h>
+#include <termios.h>
 
 @ One of the first things we want to do in initialising the program
 is initialising the terminal. To keep things tidy, we shall
@@ -48,12 +47,20 @@ so we can do other stuff while waiting for the user to type something.
 @<Initialise the program@>=
 init_term();
 
-@ Thankfully for us, all the functions we need 
-to set up the terminal are nicely packaged in the ncurses library.
-Recall that we must begin with |initscr()|, or else nothing
-will work. Note that we also call |refresh()| to clear the screen.
+@ To save and restore the terminal state, we need a pair of
+|termios| structures.
+@<Global variables@>=
+struct termios new_term;
+struct termios old_term;
 
-We control the speed of the snake by passing a paremeter to |halfdelay()|.
+@ The terminal initialisation we need to do has to be done
+through a series of functions defined in {\tt termios.h}.
+This part of the program is a little boring; it requires knowledge
+of how the termios library interface works. It can be skipped without
+much trouble.
+
+We control the speed of the snake by changing the |VTIME| value in
+the |c_cc| array of our termios structure.
 What this does it it controls how long our program waits between
 each keypress, so in our main loop we can control how quickly we update
 the board. This will become clearer as we develop more of the basic
@@ -62,12 +69,14 @@ building blocks of our game.
 @<Function definitions@>=
 void init_term(void)
 {
-  initscr();
-  refresh();
-  raw();
-  halfdelay(snake_speed);
-  timeout(0);
-  noecho();
+  /* Save current terminal settings */
+  tcgetattr(STDIN_FILENO, &old_term);
+  new_term = old_term;
+  new_term.c_cc[VTIME] = snake_speed;
+  new_term.c_cc[VMIN] = 0;
+  new_term.c_iflag &= ~(IXON | INPCK);
+  new_term.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+  tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
 }
 @ Let's add the global variable |speed| and set it to a default value.
 This actually makes for quite a challenging game by default, especially
@@ -95,12 +104,13 @@ to be called on the program's exit, so we use the convenient function
 some strange behaviour in their terminals.
 @<Function declarations@>=
 void fini_term(void);
-@ The only thing we need to do in |fini_term| is call |endwin()|; this
+@ The only thing we need to do in |fini_term| is call |tcsetattr()| with a pointer to |old_term|
+as the argument; this
 automatically fixes the terminal and restores it to its original condition.
 @<Function definitions@>=
 void fini_term(void)
 {
-  endwin();
+  tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
 }
 @
 @<Initialise...@>=
@@ -194,8 +204,8 @@ we are tackling the last part of the plan, as it is the easiest.
 void display_board(void);
 @ Since our board is represented internally by a two dimensional array
 of characters, we can just print one row at a time. We just need to make
-sure that before doing any printing, we reset ncurses's internal
-coordinates to the origin so that board prints over itself each time,
+sure that before doing any printing, we clear the screen and rest
+the cursor position so that board prints over itself each time,
 giving the illustion of the snake moving. If we didn't, each iteration
 of the board would print one after the other, making for a very confusing game.
 users might even visit their doctor to check if they are having hallucinations.
@@ -205,16 +215,18 @@ print some other information, like instructions and the current score. We haven'
 declared a global variable yet to hold the score; we'll do that immediately
 following the function definition.
 
+Don't worry about the control sequences at the beginning; they are the control
+sequences to clear the screen and reposition the cursor.
 @<Function definitions@>=
 void display_board(void)
 {
-  move(0, 0);
+  printf("\033[2J");
+  printf("\033[H");
   for (int i = 0; i < width; i++) {
-    printw("%s\n", board[i]);
+    printf("%s\n", board[i]);
   }
-  printw("INSTRUCTIONS: wasd to move, q to quit\n");
-  printw("Score: %d\n", score);
-  refresh();
+  printf("INSTRUCTIONS: wasd to move, q to quit\n");
+  printf("Score: %d\n", score);
 }
 @ 
 @<Global variables@>=
@@ -488,7 +500,7 @@ void update_board(void)
   board[snake_head->y][snake_head->x] = SNAKE_CHAR;
 }
 
-@* The apple. The last piece of the puzzle we need before putting
+@* The apple. The second last piece of the puzzle we need before putting
 everything together is the apple. This part is simple; we just need
 to generate a random coordinate.
 
@@ -608,9 +620,8 @@ loop should be fairly easy to understand.
 /* The keystrokes of the user */
 int k;
 generate_apple();
-while ((k = getch()) != QUIT_CHAR) {
-  /* This actually makes everything appear on the terminal! */
-  refresh();
+k = 0;
+while (k != QUIT_CHAR) {
   display_board();
   @<Change direction of snake depending on value of keystroke@>@;
   move_snake();
@@ -623,6 +634,7 @@ while ((k = getch()) != QUIT_CHAR) {
     grow_snake();
     generate_apple();
   }
+  read(STDIN_FILENO, &k, 1);
 }
 @
 @<Change direction of snake depending on value of keystroke@>=
@@ -642,16 +654,9 @@ case UP_CHAR:
 }
 @ Sympathy for losing the game is not needed.
 
-This is a somewhat cumbersome method of exiting
-the program when the game is over, but simply
-using |printw()| wouldn't work since calling |endwin()|
-immediately clears the screen. Using |printf()|
-after |endwin()| means the line is printed by
-itself on the user's terminal.
 @<Print game over message and exit@>=
-endwin();
 printf("GAME OVER. Final score: %d\n", score);
-return EXIT_SUCCESS;
+exit(EXIT_SUCCESS);
 
 @*Include files. Throughout the entire program we have just
 assumed that the facilities of the C standard library were present.
