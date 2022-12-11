@@ -3,9 +3,12 @@ written in C.
 
 The user is able to control the dimensions of the board
 and the length of the snake through command-line arguments.
-The default board size is $50$ units by $50$ units, with a
+The default board size is $10$ units by $10$ units, with a
 snake size of $4$. The traditional WASD keys are used
-for controlling the snake.
+for controlling the snake. The other normal rules of the snake
+game apply: if the snake runs into itself or off the board then
+the game is over, and each time the snake gets an apple its
+length increases by $1$.
 
 The program uses the ncurses library for terminal input and output.
 When compiling, make sure to add {\tt -lncurses} to the compiler flags.
@@ -49,17 +52,30 @@ init_term();
 to set up the terminal are nicely packaged in the ncurses library.
 Recall that we must begin with |initscr()|, or else nothing
 will work. Note that we also call |refresh()| to clear the screen.
+
+We control the speed of the snake by passing a paremeter to |halfdelay()|.
+What this does it it controls how long our program waits between
+each keypress, so in our main loop we can control how quickly we update
+the board. This will become clearer as we develop more of the basic
+building blocks of our game.
+
 @<Function definitions@>=
 void init_term(void)
 {
   initscr();
   refresh();
   raw();
-  halfdelay(2);
+  halfdelay(snake_speed);
   timeout(0);
   noecho();
 }
-@ Let's add the function declaration before we forget.
+@ Let's add the global variable |speed| and set it to a default value.
+This actually makes for quite a challenging game by default, especially
+on a small board.
+@d DEFAULT_SNAKE_SPEED 2
+@<Global variables@>=
+int snake_speed = DEFAULT_SNAKE_SPEED;
+@ Let's add the function declaration for |init_term()| before we forget.
 
 If you are wondering why we are adding function declarations even
 though all the functions will end up being in the same C file, it
@@ -513,7 +529,9 @@ command line arguments, through which the user is able to
 control the board size and initial size of the snake.
 
 The two flags {\tt -w} and {\tt -l} control the board size
-and size of the snake respectively. No other flags are recognised
+and size of the snake respectively. The {\tt -s} flag
+controls the speed of the snake on a scale of $1$ to $9$, where
+$9$ is fastest and $1$ is slowest. No other flags are recognised
 for the moment.
 
 Parsing the command line is always boring and difficult to
@@ -524,7 +542,7 @@ the |getopt()| manual page (try typing in your terminal {\tt man 3 getopt}).
 
 @<Parse command line arguments@>=
 int c; /* Option character */
-while ((c = getopt(argc, argv, ":hw:l:")) > 0) {
+while ((c = getopt(argc, argv, ":hw:l:s:")) > 0) {
   switch (c) {
   case 'h':
     usage();
@@ -540,6 +558,13 @@ while ((c = getopt(argc, argv, ":hw:l:")) > 0) {
     snake_length = atoi(optarg);
     if (snake_length == 0) {
       fprintf(stderr, "Bad argument to -l flag.\n");
+      exit(EXIT_FAILURE);
+    }
+    break;
+  case 's':
+    snake_speed = 10 - atoi(optarg);
+    if (snake_speed > 9 || snake_speed < 1) {
+      fprintf(stderr, "Bad argument to -s flag.\n");
       exit(EXIT_FAILURE);
     }
     break;
@@ -564,8 +589,9 @@ void usage(void)
 {
   fprintf(stderr, "USAGE: snake [OPTION]\n");
   fprintf(stderr, "    Options:\n");
-  fprintf(stderr, "      -w\tSpecify width of board\n");
-  fprintf(stderr, "      -l\tSpecify starting length of snake\n");
+  fprintf(stderr, "      -w\tSpecify width of board (default 10)\n");
+  fprintf(stderr, "      -l\tSpecify starting length of snake (default 4)\n");
+  fprintf(stderr, "      -s\tSpecify speed of snake from 1-9 (9 fastest, 1 slowest, default 8)\n");
   fprintf(stderr, "      -l\tPrint this help and exit\n");
   exit(EXIT_SUCCESS);
 }
